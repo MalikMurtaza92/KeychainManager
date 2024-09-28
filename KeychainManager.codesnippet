@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>IDECodeSnippetCompletionPrefix</key>
+	<string></string>
+	<key>IDECodeSnippetCompletionScopes</key>
+	<array>
+		<string>All</string>
+	</array>
+	<key>IDECodeSnippetContents</key>
+	<string>import Foundation
+
+/// An enumeration representing errors that can occur when interacting with the Keychain.
+enum KeychainError: Error {
+    /// Thrown when the requested item could not be found in the Keychain.
+    case itemNotFound
+    /// Thrown when there's a communication issue with the Keychain service.
+    case serviceError
+    /// Thrown when there's a problem converting data from the Keychain to the required format.
+    case conversionError
+    /// Thrown when the data provided or retrieved from the Keychain is invalid.
+    case badData
+}
+
+extension KeychainError: LocalizedError {
+    /// Provides localized error messages for each `KeychainError` case.
+    var errorDescription: String? {
+        switch self {
+        case .itemNotFound:
+            return NSLocalizedString("The requested item could not be found in the Keychain.", comment: "")
+        case .serviceError:
+            return NSLocalizedString("There was an issue communicating with the Keychain service.", comment: "")
+        case .conversionError:
+            return NSLocalizedString("Data conversion error occurred when retrieving the item from Keychain.", comment: "")
+        case .badData:
+            return NSLocalizedString("The retrieved data is corrupted or in an unexpected format.", comment: "")
+        }
+    }
+}
+
+/// A singleton class responsible for storing, retrieving, updating, and deleting credentials from the Keychain.
+struct KeychainManager {
+    
+    /// A unique service identifier used to namespace Keychain items.
+    private let service: String = &lt;#Service name#&gt;
+    
+    /// The shared instance of `KeychainManager` following the singleton pattern.
+    static let shared = KeychainManager()
+    
+    /// Private initializer to prevent instantiation and ensure a single instance.
+    private init() {}
+    
+    /**
+     Stores the given account and password securely in the Keychain.
+     
+     - Parameters:
+        - account: The account identifier (e.g., username or email) to store the credentials for.
+        - password: The password to be stored securely in the Keychain.
+     
+     - Throws: `KeychainError.badData` if the password cannot be converted to `Data`.
+               `KeychainError.serviceError` if there's a problem storing the item in the Keychain.
+     */
+    func storeCredentialsIntoKeychain(account: String, password: String) throws {
+        // Convert the password string to Data
+        guard let passwordData = password.data(using: .utf8) else { throw KeychainError.badData }
+        
+        // Create a query for storing the account and password in the Keychain
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: passwordData
+        ]
+        
+        // Attempt to add the item to the Keychain
+        let status = SecItemAdd(query as CFDictionary, nil)
+        
+        // If the item already exists, update it
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecDuplicateItem:
+            try updateCredential(account: account, password: password)
+        default:
+            throw KeychainError.serviceError
+        }
+    }
+    
+    /**
+     Retrieves the password for the specified account from the Keychain.
+     
+     - Parameters:
+        - account: The account identifier (e.g., username or email) to retrieve the credentials for.
+     
+     - Returns: The password associated with the specified account.
+     
+     - Throws: `KeychainError.itemNotFound` if no matching item is found in the Keychain.
+               `KeychainError.serviceError` for other Keychain-related errors.
+               `KeychainError.conversionError` if the retrieved data cannot be converted to a string.
+     */
+    @discardableResult
+    func getCredential(account: String) throws -&gt; String {
+        // Create a query to fetch the account credentials from the Keychain
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true
+        ]
+        
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &amp;result)
+        
+        // Check for item not found or service errors
+        guard status != errSecItemNotFound else {
+            throw KeychainError.itemNotFound
+        }
+        guard status == errSecSuccess else {
+            throw KeychainError.serviceError
+        }
+        
+        // Retrieve and decode the password
+        guard let existingItems = result as? [String: Any],
+              let valueData = existingItems[kSecValueData as String] as? Data,
+              let password = String(data: valueData, encoding: .utf8) else {
+            throw KeychainError.conversionError
+        }
+        
+        return password
+    }
+    
+    /**
+     Updates the stored password for the given account in the Keychain.
+     
+     - Parameters:
+        - account: The account identifier (e.g., username or email) to update the credentials for.
+        - password: The new password to store in the Keychain.
+     
+     - Throws: `KeychainError.itemNotFound` if no matching item is found in the Keychain.
+               `KeychainError.serviceError` for other Keychain-related errors.
+               `KeychainError.badData` if the password cannot be converted to `Data`.
+     */
+    func updateCredential(account: String, password: String) throws {
+        // Convert the password string to Data
+        guard let passwordData = password.data(using: .utf8) else { throw KeychainError.badData }
+        
+        // Create a query to locate the account in the Keychain
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        
+        // Create an attribute dictionary to update the password
+        let attribute: [String: Any] = [
+            kSecValueData as String: passwordData
+        ]
+        
+        // Update the Keychain item
+        let status = SecItemUpdate(query as CFDictionary, attribute as CFDictionary)
+        
+        // Check for item not found or service errors
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecItemNotFound:
+            throw KeychainError.itemNotFound
+        default:
+            throw KeychainError.serviceError
+        }
+    }
+    
+    /**
+     Deletes the stored credentials for the given account from the Keychain.
+     
+     - Parameters:
+        - account: The account identifier (e.g., username or email) whose credentials should be deleted.
+     
+     - Throws: `KeychainError.serviceError` for any Keychain-related errors during deletion.
+     */
+    func deleteCredential(account: String) throws {
+        // Create a query to locate the account in the Keychain
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        
+        // Attempt to delete the Keychain item
+        let status = SecItemDelete(query as CFDictionary)
+        
+        // Throw service error for any issue except item not found
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.serviceError
+        }
+    }
+}</string>
+	<key>IDECodeSnippetIdentifier</key>
+	<string>918B90D8-9027-4CB0-B760-7AC7A922738E</string>
+	<key>IDECodeSnippetLanguage</key>
+	<string>Xcode.SourceCodeLanguage.Swift</string>
+	<key>IDECodeSnippetSummary</key>
+	<string></string>
+	<key>IDECodeSnippetTitle</key>
+	<string>Keychain Manager</string>
+	<key>IDECodeSnippetUserSnippet</key>
+	<true/>
+	<key>IDECodeSnippetVersion</key>
+	<integer>0</integer>
+</dict>
+</plist>
